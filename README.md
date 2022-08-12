@@ -8,6 +8,8 @@ The training data can be found here: TODO
 
 TODO: add pretrained weights
 
+TODO: add atlas nifti
+
 How to run for your own data:
 ```
 git clone https://github.com/wasserth/MyelinAge.git
