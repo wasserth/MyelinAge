@@ -30,7 +30,6 @@ from classifier.utils import confusion_matrix_to_figure
 from classifier.utils_loading import load_lightning_model
 from classifier.transformations import get_transforms
 from libs.utils import get_all_metrics
-from libs.statistics import bootstrap_statistics
 
 warnings.filterwarnings("ignore")
 pl.seed_everything(1234)
@@ -55,17 +54,23 @@ def run_inference_single_file(project, exps, img_file_pathes):
 
     # Copy files to tmp directory
     subjects_val = ["s01"]
-    img_files = []
-    for idx, img_file in enumerate(img_file_pathes):
-        shutil.copy(img_file, data_path / tmp_dir / "s01" / f"img_{idx}.nii.gz")
-        img_files.append(f"img_{idx}.nii.gz")
+    for img_file, file_name in img_file_pathes:
+        shutil.copy(img_file, data_path / tmp_dir / "s01" / file_name)
     
     # Create fake label
     labels_val = np.array([0], dtype=np.float32)
 
-    subjects, gts_class, preds_class, gts, preds = run_inference(project, exps, subjects_val,
-                                                                labels_val, img_files, data_folder,
-                                                                tta_nr=1)
+    # working with multiple dataloaders
+    preds, preds_class = [], []
+    for exp in exps:
+        exp = exp if type(exp) is list else [exp]
+        # img_files need to have same naming as in training data
+        subject, gt_class, pred_class, gt, pred = run_inference(project, exp, subjects_val, labels_val,
+                                                                data_folder=data_folder, tta_nr=1)
+        preds.append(pred)
+        preds_class.append(pred_class)
+    preds = np.array(preds).mean(axis=0)
+    preds_class = np.array(preds_class).mean(axis=0).round()
 
     shutil.rmtree(data_path / tmp_dir)
 
@@ -150,7 +155,8 @@ def run_inference(project, exps, subjects_val=None, labels_val=None, img_files=N
                                tta_nr=tta_nr,
                                tiles_subsample=model.hparams.tiles_subsample,
                                tiles_start=model.hparams.tiles_start,
-                               zoom=model.hparams.zoom)
+                               zoom=model.hparams.zoom,
+                               slice_orientation=model.hparams.slice_orientation)
 
     # Per default DataLoader not doing any shuffling even with num_workers > 1
     loader_val = DataLoader(dataset_val, batch_size=batch_size, num_workers=10, pin_memory=True)
@@ -230,6 +236,7 @@ def run_inference_multi_dataloader(project, exps, subjects_val=None, labels_val=
 
 
 def eval_predictions(gts_class, preds_class, gts, preds):
+    from libs.statistics import bootstrap_statistics
     
     # todo for each dataset: set appropriate averaging
     average="macro"  # None|micro|macro
@@ -337,8 +344,8 @@ def save_predictions(subjects, gts_class, preds_class, gts, preds, metrics, proj
     json.dump(metrics_rounded, open(output_path / fn.replace(".xlsx", ".json"), "w"), indent=4)
     
     # Save confusion matrix
-    fig = confusion_matrix_to_figure(confusion_matrix(gts_class, preds_class), len(np.unique(gts_class)))
-    fig.savefig(output_path / fn.replace(".xlsx", ".png"), dpi=300)
+    # fig = confusion_matrix_to_figure(confusion_matrix(gts_class, preds_class), len(np.unique(gts_class)))
+    # fig.savefig(output_path / fn.replace(".xlsx", ".png"), dpi=300)
 
 
 def append_predictions_to_table(metrics, project, exp_name, fn):
@@ -346,7 +353,7 @@ def append_predictions_to_table(metrics, project, exp_name, fn):
     output_path = output_path / fn
 
     # Only keep subset of metrics
-    metrics = {k: v for k, v in metrics.items() if k in ["f1", "auroc_binary"]}
+    metrics = {k: v for k, v in metrics.items() if k in ["f1", "auroc_binary", "mae"]}
 
     if os.path.exists(output_path):
         df = pd.read_excel(output_path)

@@ -190,3 +190,11 @@ def undo_canonical_nifti(path_in_can, path_in_orig, path_out):
     img_out = undo_canonical(img_can, img_orig)
     nib.save(img_out, path_out)
 
+
+if __name__ == "__main__":
+    import nibabel.processing
+    moving = nib.load(sys.argv[1])
+    target = nib.load(sys.argv[2])
+    out = sys.argv[3]
+    moving_transformed = nibabel.processing.resample_from_to(moving, target)
+    nib.save(moving_transformed, out)

@@ -28,7 +28,8 @@ class NiftiDataset(Dataset):
     def __init__(self, data_path, subjects, labels, transform=None, dim=3, nr_slices=3,
                  multi_orientation=0, crop_size=(170,170), slice_subset=0, img_files="ct_05.npy", 
                  loss="ce", nr_classes=2, deterministic=False, tiles=False, 
-                 file_loader=nifti_loader, tta_nr=1, tiles_subsample=3, tiles_start=4, zoom=[1.0, 1.0, 1.0]):
+                 file_loader=nifti_loader, tta_nr=1, tiles_subsample=3, tiles_start=4, zoom=[1.0, 1.0, 1.0],
+                 slice_orientation="z", unpack_to_npy=True):
         self.data_path = data_path
         self.labels = labels
         self.transform = transform
@@ -48,7 +49,8 @@ class NiftiDataset(Dataset):
         self.tiles_subsample = tiles_subsample
         self.tiles_start = tiles_start
         self.zoom = zoom
-
+        self.slice_orientation = slice_orientation
+        self.unpack_to_npy = unpack_to_npy
 
     def get_data(img_path):
         # todo: move loading of x here so we can reuse it in inference
@@ -61,14 +63,14 @@ class NiftiDataset(Dataset):
         rnd_size = None  # initialize here to make the same for all modalities
         x_all = []
         for img_file in self.img_files:  # iterate over modalities
-            if os.path.exists(f"{img_file.split('.')[0]}.npy"):
-                print("Loading npy")
+            if os.path.exists(subject_path / f"{img_file.split('.')[0]}.npy"):
                 # for 2D loading entire 3D volume is very slow
                 # load from npy with mmap=r: will only read the slices that are really required -> a lot faster for 2D
                 mmap_mode = "r" if self.dim == 2 else None
                 x = np.load(subject_path / f"{img_file.split('.')[0]}.npy", mmap_mode=mmap_mode) 
             else:
-                # x = nib.load(subject_path / img_file).get_fdata()
+                # if self.unpack_to_npy:
+                #     print("WARNING: loading nifti file. Should load npy. Why was npy not created?")
                 x = self.file_loader(subject_path / img_file)
             y = self.labels[index]
 
@@ -79,7 +81,12 @@ class NiftiDataset(Dataset):
                 x = ndimage.zoom(x, self.zoom, order=0)
 
             if rnd_size is None:
-                rnd_size = int(x.shape[2] / 8)
+                if self.slice_orientation == "x":
+                    rnd_size = int(x.shape[0] / 8)
+                elif self.slice_orientation == "y":
+                    rnd_size = int(x.shape[1] / 8)
+                elif self.slice_orientation == "z":
+                    rnd_size = int(x.shape[2] / 8)
                 # this is not affected by np multiprocessing random seed bug, because is native python random
                 rnd = 0 if self.deterministic else random.randint(-rnd_size, rnd_size)
 
@@ -100,7 +107,7 @@ class NiftiDataset(Dataset):
                         # x = img_3d_to_tiles_2d(x[:,:,first_quarter+abs(rnd):three_quarter:self.tiles_subsample])[None,...]
                     else:
                         x = get_slices_from_3D_img(x, self.nr_slices, self.multi_orientation,
-                                                   self.crop_size, rnd, rnd_size)
+                                                   self.crop_size, rnd, rnd_size, self.slice_orientation)
             else:
                 x = x[None,...]  # add channel dim
 

@@ -16,3 +16,4 @@ lightning_logs
 .ipynb_checkpoints
 .data
 .env
+brainage/weights

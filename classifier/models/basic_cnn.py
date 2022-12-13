@@ -60,6 +60,7 @@ class BasicCNN(nn.Module):
         x = self.relu(self.Conv_4_bn(self.Conv_4(x)))
         # x = self.Conv_4_mp(x)
         # x = x.view(x.size(0), -1)
+        # print(f"Shape before avg pooling: {x.shape}")
         x = self.Conv_4_ap(x)
         x = torch.flatten(x, 1)
         x = self.dropout(x)
