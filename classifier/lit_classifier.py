@@ -22,6 +22,7 @@ from libs.utils import scale_to_range
 from classifier.models.alexnet import alexnet
 from classifier.models.torchvision_overwrite import TorchVisionOverwrite
 from classifier.models.basic_cnn import BasicCNN
+from classifier.models.chen_net import ChenNet
 from classifier.models.cnn_rnn import CNNRNN
 from classifier.models.cbr_tiny import CbrTiny
 from classifier.models.cnn_transformer import CNNTransformer
@@ -42,7 +43,7 @@ class LitClassifier(pl.LightningModule):
 
         if self.hparams.dim == 3 and not self.hparams.model in ["densenet", "efficientnet_3D", "basiccnn",
                                                                 "cbr_tiny", "cnn_rnn", "cnn_transformer",
-                                                                "cbr_tiny_hydra"]:
+                                                                "cbr_tiny_hydra", "chen_net"]:
             raise ValueError(f"This model ({self.hparams.model}) does not support 3D.")
 
         if self.hparams.model == "densenet":
@@ -73,6 +74,9 @@ class LitClassifier(pl.LightningModule):
         elif self.hparams.model == "basiccnn":
             self.backbone = BasicCNN(self.hparams.crop_size, dim=spatial_dims, num_classes=nr_classes,
                                      in_chans=nr_channels, dropout=self.hparams.dropout)
+        elif self.hparams.model == "chen_net":
+            self.backbone = ChenNet(self.hparams.crop_size, dim=spatial_dims, num_classes=nr_classes,
+                                     in_chans=nr_channels, dropout=self.hparams.dropout, nr_filt=self.hparams.nr_filt)
         elif self.hparams.model == "cnn_rnn":
             self.backbone = CNNRNN(self.hparams.crop_size, pretrained=self.hparams.pretrain,
                                    num_classes=nr_classes, in_chans=nr_channels,
@@ -110,11 +114,11 @@ class LitClassifier(pl.LightningModule):
             # num_classes=1: like sklearn f1_score binary
             # num_classes=2: like sklearn f1_score micro   
             # (for Recall&Precision + lightning>=1.2.0 only num_classes=2 is working)
-            self.f1 = torchmetrics.F1(num_classes=self.hparams.nr_classes_config)
+            self.f1 = torchmetrics.F1Score(num_classes=self.hparams.nr_classes_config)
             self.accuracy_m = torchmetrics.Accuracy()
             self.recall_m = torchmetrics.Recall(num_classes=self.hparams.nr_classes_config)
             self.precision_m = torchmetrics.Precision(num_classes=self.hparams.nr_classes_config)
-            self.auroc_m = torchmetrics.AUROC(num_classes=self.hparams.nr_classes_config)
+            # self.auroc_m = torchmetrics.AUROC(num_classes=self.hparams.nr_classes_config)
 
         self.max_f1 = 0
 
@@ -208,10 +212,12 @@ class LitClassifier(pl.LightningModule):
             # if y.min() == 1:
             #     print("WARNING: All labels 1, therefore setting one to 0 for AUROC to work.")
             #     y[0] = 0
-            if self.hparams.loss == "ce":
-                self.log('misc_val/auroc', self.auroc_m(F.softmax(y_hat_prob, dim=1), y), on_step=False, on_epoch=True)
-            if self.hparams.loss == "bce":
-                self.log('misc_val/auroc', self.auroc_m(F.sigmoid(y_hat_prob)[:, 0], y), on_step=False, on_epoch=True)
+
+            # This is working but deactivated because shows many warnings. Activate if needed.
+            # if self.hparams.loss == "ce":
+            #     self.log('misc_val/auroc', self.auroc_m(F.softmax(y_hat_prob, dim=1), y), on_step=False, on_epoch=True)
+            # if self.hparams.loss == "bce":
+            #     self.log('misc_val/auroc', self.auroc_m(F.sigmoid(y_hat_prob)[:, 0], y), on_step=False, on_epoch=True)
 
             # Same result as self.auroc_m
             # a = F.softmax(y_hat_prob, dim=1).detach().cpu().numpy()[:, 1]
@@ -229,7 +235,7 @@ class LitClassifier(pl.LightningModule):
             # Important note: this does not correctly work for Multi-GPU training
             preds = torch.cat([step['y_hat'] for step in outputs])
             targets = torch.cat([step['y'] for step in outputs])
-            f1 = torchmetrics.functional.f1(preds, targets, num_classes=self.hparams.nr_classes_config).item()
+            f1 = torchmetrics.functional.f1_score(preds, targets, num_classes=self.hparams.nr_classes_config).item()
             if self.current_epoch > 0:  # skip validation sanity check (and first epoch)
                 self.max_f1 = max(self.max_f1, f1)
             self.log("f1/val_max", self.max_f1)
@@ -278,13 +284,13 @@ class LitClassifier(pl.LightningModule):
 
             # Print f1 per class
             s = ""
-            f1_all = torchmetrics.functional.f1(y_hat, y, num_classes=self.hparams.nr_classes_config).item()
+            f1_all = torchmetrics.functional.f1_score(y_hat, y, num_classes=self.hparams.nr_classes_config).item()
             s += f"All: {f1_all:.3f}\n  "
             for class_idx in range(self.hparams.nr_classes_config):
                 # different results depending on num_classes:
                 # num_classes=1: like sklearn f1_score binary
                 # num_classes=2: like sklearn f1_score micro  
-                f1 = torchmetrics.functional.f1((y_hat == class_idx).int(),
+                f1 = torchmetrics.functional.f1_score((y_hat == class_idx).int(),
                                                 (y == class_idx).int(), num_classes=2).item()
                 s += f"{class_idx}: {f1:.3f}\n  "
             self.logger.experiment.add_text("F1 per class", s, self.current_epoch)

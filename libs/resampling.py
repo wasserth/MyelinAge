@@ -98,7 +98,7 @@ def resample_img_nnunet(data, mask=None, original_spacing=1.0, target_spacing=2.
 
 
 def change_spacing(img_in, new_spacing=1.25, target_shape=None, order=0, nr_cpus=1,
-                   nnunet_resample=False, dtype=None, remove_negative=False):
+                   nnunet_resample=False, dtype=None, remove_negative=False, force_affine=None):
     """
     Resample nifti image to the new spacing (uses resample_img internally).
     
@@ -110,6 +110,8 @@ def change_spacing(img_in, new_spacing=1.25, target_shape=None, order=0, nr_cpus
                      in a little bit less blurry results
     dtype: output datatype
     remove_negative: set all negative values to 0. Useful if resampling introduced negative values.
+    force_affine: if you pass an affine then this will be used for the output image (useful if you have to make sure
+                  that the resampled has identical affine to some other image. In this case also set target_shape.)
 
     Works for 2D and 3D and 4D images.
 
@@ -169,6 +171,9 @@ def change_spacing(img_in, new_spacing=1.25, target_shape=None, order=0, nr_cpus
 
     if dtype is not None:
         new_data = new_data.astype(dtype)
+
+    if force_affine is not None:
+        new_affine = force_affine
 
     return nib.Nifti1Image(new_data, new_affine)
 

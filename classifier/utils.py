@@ -4,6 +4,7 @@ p_dir = str(Path(__file__).absolute().parents[1])
 if p_dir not in sys.path: sys.path.insert(0, p_dir)
 
 import os
+import pickle
 import random
 import math
 import json
@@ -31,7 +32,7 @@ def _get_slice_idxs(mid, nr_slices, offset=25):
     return slice_idxs
 
     
-def get_slices_from_3D_img(x, nr_slices, multi_orientation, crop_size, rand_int, offset):
+def get_slices_from_3D_img(x, nr_slices, multi_orientation, crop_size, rand_int, offset, orientation="z"):
     """
     x: numpy array with dimensions [x,y,z]
     nr_slices: how many slices to select in each orientation
@@ -51,10 +52,21 @@ def get_slices_from_3D_img(x, nr_slices, multi_orientation, crop_size, rand_int,
         slices[1*ns:2*ns, :, :] = cropper(x[:, _get_slice_idxs(mid[1], nr_slices, offset), :].transpose(1,0,2))
         slices[2*ns:3*ns, :, :] = cropper(x[:, :, _get_slice_idxs(mid[2], nr_slices, offset)].transpose(2,0,1))
     else:
-        mid = int(x.shape[2] / 2) 
-        if x.shape[2] > 1:  # do not add random factor for 2D images
-            mid += rand_int
-        slices = x[:, :, _get_slice_idxs(mid, nr_slices, offset)].transpose(2,0,1)
+        if orientation == "x":
+            mid = int(x.shape[0] / 2)  # sagittal (side view)
+            if x.shape[0] > 1:  # do not add random factor for 2D images
+                mid += rand_int
+            slices = x[_get_slice_idxs(mid, nr_slices, offset), :, :]
+        elif orientation == "y":  # coronal (front view)
+            mid = int(x.shape[1] / 2) 
+            if x.shape[1] > 1:  # do not add random factor for 2D images
+                mid += rand_int
+            slices = x[:, _get_slice_idxs(mid, nr_slices, offset), :].transpose(1,0,2)
+        elif orientation == "z":  # axial (top view)
+            mid = int(x.shape[2] / 2) 
+            if x.shape[2] > 1:  # do not add random factor for 2D images
+                mid += rand_int
+            slices = x[:, :, _get_slice_idxs(mid, nr_slices, offset)].transpose(2,0,1)
 
     return slices
 
@@ -64,7 +76,7 @@ def get_slices_from_3D_img_subset(x, seg, nr_slices, rand_int):
     like get_slices_from_3D_img() but will derive the middle slice not from the entire image but 
     will take the middle of segmentation, provided in a separate file.
 
-    Does not support multi_orientation.
+    Does not support multi_orientation or an orientation other than z.
     """
     if seg.sum() > 0:
         bb_x, bb_y, bb_z = get_bbox_from_mask(seg, outside_value=0)
@@ -98,9 +110,14 @@ def img_3d_to_tiles_2d(img):
 
 
 def get_meta_df(path, index_col="AccessionNumber"):
-    meta = pd.read_excel(path, dtype={index_col: str})
-    # meta[index_col] = meta[index_col].astype(str)  # this can not restore leading 0s
-    meta = meta.set_index(index_col)
+    if (path.parent / f"{path.stem}.pkl").exists():
+        return pickle.load(open(path.parent / f"{path.stem}.pkl", "rb"))
+    else:
+        meta = pd.read_excel(path, dtype={index_col: str})
+        # meta[index_col] = meta[index_col].astype(str)  # this can not restore leading 0s
+        meta = meta.set_index(index_col)
+        print("Saving meta data as pickle for faster loading...")
+        pickle.dump(meta, open(path.parent / f"{path.stem}.pkl", "wb"))
     return meta
 
 

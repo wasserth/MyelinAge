@@ -4,11 +4,13 @@ p_dir = str(Path(__file__).absolute().parents[1])
 if p_dir not in sys.path: sys.path.insert(0, p_dir)
 
 import os
+import time
 from argparse import ArgumentParser, Namespace
 import json
 import logging
 import random
 from functools import partial
+import warnings
 
 # from rich.traceback import install
 # install(show_locals=False)
@@ -25,7 +27,8 @@ import pytorch_lightning as pl
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.callbacks import GPUStatsMonitor
+# from pytorch_lightning.callbacks import GPUStatsMonitor  # deprecated
+from pytorch_lightning.callbacks import DeviceStatsMonitor
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from p_tqdm import p_map
 
@@ -39,8 +42,11 @@ from libs.utils import flatten
 from classifier.utils_hparams import args_short_to_long
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # set to 2 to hide all tf warnings
+# set to logging.INFO for more infos e.g. nr of model parameters
 logging.getLogger("pytorch_lightning").setLevel(logging.WARNING)
 
+# Hide annoying warnings. Remove when installing new versions.
+warnings.filterwarnings("ignore")  
 
 def cli_main():
     pl.seed_everything(1234)
@@ -70,7 +76,7 @@ def cli_main():
                                 "tf_efficientnet_b3_ns", "tf_efficientnet_b0_ns", "mobilenetv3_large_100",
                                 "efficientnet_3D", "resnet152d", "resnet18", "alexnet", "vgg16",
                                 "basiccnn", "cbr_tiny", "cnn_rnn", "cnn_transformer", "enet_hydra",
-                                "cbr_tiny_hydra"])
+                                "cbr_tiny_hydra", "chen_net"])
     parser.add_argument("-lr", "--learning_rate", type=float, default=5e-4)
     parser.add_argument("-pre", "--pretrain", type=int, default=1)  # pretrained with imagenet
     parser.add_argument("-pre_exp", "--pretrain_exp", type=str, default="")  # pretrained with specific exp
@@ -83,6 +89,9 @@ def cli_main():
     parser.add_argument("-mo", "--multi_orientation", type=int, default=0)
     parser.add_argument("-li", "--log_images", type=int, default=0)    
     parser.add_argument("-ss", "--slice_subset", type=int, default=0)    
+    # when sampling 2d slices from which orientation to sample
+    parser.add_argument("-so", "--slice_orientation", type=str, default="z", choices=["x", "y", "z"])
+    parser.add_argument("-det", "--deterministic", type=int, default=0)    
 
     # Data augmentation
     parser.add_argument("-prob", "--daug_prob", type=float, default=0.3)
@@ -101,7 +110,7 @@ def cli_main():
     parser.add_argument("-hi", "--daug_histogram_shift", type=int, default=0)
     parser.add_argument("-gi", "--daug_gibbs_noise", type=int, default=0)
     parser.add_argument("-sn", "--daug_spike_noise", type=int, default=0)
-    parser.add_argument("-cu", "--daug_cutout", type=int, default=0)
+    parser.add_argument("-cu", "--daug_cutout", type=int, default=0)  # throws error with newer monai
     parser.add_argument("-po", "--daug_posterize", type=int, default=0)
     parser.add_argument("-re", "--daug_random_erasing", type=int, default=0)
     parser.add_argument("-rea", "--daug_re_area", type=float, default=0.1)
@@ -141,6 +150,11 @@ def cli_main():
     args = parser.parse_args()
 
     # args.gpus = [1]  # select specific gpu by id
+    args.accelerator = "gpu"
+    args.devices = args.gpus
+    del args.gpus
+    
+    args.deterministic = bool(args.deterministic)
 
     # Parse project identifier
     project_name, task_name = args.project.split("/")
@@ -208,6 +222,7 @@ def cli_main():
     # shuffle it during training and for validation no shuffling needed.
     print(f"First 10 val subjects: {args.subjects_val[:10]}")
     print(f"First 10 val labels: {args.labels_val[:10]}")
+    print(f"Nr of train subjects: {len(args.subjects_train)}")
 
     args.crop_size = config[f"crop_size_{args.dim}d_tiles"] if args.tiles and args.dim == 2 else config[f"crop_size_{args.dim}d"]
     args.zoom = [float(e) for e in args.zoom.split(",")]
@@ -222,16 +237,22 @@ def cli_main():
     args.nr_classes = args.nr_classes if not args.loss.startswith("mse") else 1
 
     if args.dim == 2 and not args.tiles:
-        args.nr_channels = args.nr_slices*3 if args.multi_orientation else args.nr_slices
+        nr_channel_per_img = args.nr_slices*3 if args.multi_orientation else args.nr_slices
     else:
-        args.nr_channels = 1
-    args.nr_channels *= len(args.img_files)  # multipy by nr of modalities
+        nr_channel_per_img = 1
+    args.nr_channels = nr_channel_per_img * len(args.img_files)  # multipy by nr of modalities
 
     # Convert to npy if needed
     data_dir_name = "data"
     if args.unpack_to_npy:
         img_name = f"{args.img_files[0].split('.')[0]}.npy"
-        if not os.path.exists(data_path / data_dir_name / subjects[0] / img_name):
+        all_unpacked = True
+        st = time.time()
+        for s in subjects:
+            if not (data_path / data_dir_name / s / img_name).exists():
+                all_unpacked = False
+        # print(f"Check unpacking took {time.time()-st:.2f}s")
+        if not all_unpacked:
             print("Unpacking...")
             p_map(partial(unpack_to_npy, data_path=data_path/data_dir_name, img_files=args.img_files),
                   subjects, num_cpus=10, disable=True)
@@ -251,8 +272,12 @@ def cli_main():
             # args.clip_high = intensity_stats["perc95"]
             args.clip_low = intensity_stats["perc02"]
             args.clip_high = intensity_stats["perc98"]
-            args.global_mean = [dataset_stats[img_file]["mean"] for img_file in args.img_files]
-            args.global_std = [dataset_stats[img_file]["std"] for img_file in args.img_files]
+            args.global_mean = [[dataset_stats[img_file]["mean"]] * nr_channel_per_img 
+                                for img_file in args.img_files]
+            args.global_mean = flatten(args.global_mean)
+            args.global_std = [[dataset_stats[img_file]["std"]] * nr_channel_per_img
+                                for img_file in args.img_files]
+            args.global_std = flatten(args.global_std)
         else:
             print("Use MRI/other normalization: -mean /std per image and channel (and no clipping)")
             args.normalize = 1
@@ -266,9 +291,10 @@ def cli_main():
                                  nr_slices=args.nr_slices, multi_orientation=args.multi_orientation,
                                  crop_size=args.crop_size, slice_subset=args.slice_subset,
                                  img_files=args.img_files, loss=args.loss, nr_classes=args.nr_classes,
-                                 deterministic=False, tiles=args.tiles, 
+                                 deterministic=args.deterministic, tiles=args.tiles, 
                                  tiles_subsample=args.tiles_subsample, tiles_start=args.tiles_start,
-                                 zoom=args.zoom)
+                                 zoom=args.zoom, slice_orientation=args.slice_orientation,
+                                 unpack_to_npy=args.unpack_to_npy)
     dataset_val = NiftiDataset(data_path / data_dir_name, args.subjects_val, args.labels_val,
                                transform=tfs_val, dim=args.dim,
                                nr_slices=args.nr_slices, multi_orientation=args.multi_orientation,
@@ -276,7 +302,8 @@ def cli_main():
                                img_files=args.img_files, loss=args.loss, nr_classes=args.nr_classes,
                                deterministic=True, tiles=args.tiles, 
                                tiles_subsample=args.tiles_subsample, tiles_start=args.tiles_start,
-                               zoom=args.zoom)
+                               zoom=args.zoom, slice_orientation=args.slice_orientation,
+                               unpack_to_npy=args.unpack_to_npy)
 
     if args.weight_type != "None":
         sample_weights = get_sample_weights(args.labels_train, weight_type=args.weight_type)
@@ -293,7 +320,8 @@ def cli_main():
 
     # If 3D and large batch size than nr_workers needs to be lower; otherwise something is messed up
     # and training is very slow even while utility of CPU and GPU are very low.
-    nr_workers = 10  # 16
+    # nr_workers = 10 if args.dim == 2 else 3
+    nr_workers = 10
     loader_train = DataLoader(dataset_train, sampler=sampler,
                               batch_size=args.batch_size, num_workers=nr_workers, pin_memory=True,
                               worker_init_fn=worker_init_fn)
@@ -341,7 +369,8 @@ def cli_main():
         args.callbacks += [early_stop_callback]
 
     # lr_monitor = LearningRateMonitor(logging_interval='step')
-    # gpu_stats = GPUStatsMonitor(memory_utilization=False) 
+    # gpu_stats = GPUStatsMonitor(memory_utilization=False)  # deprecated
+    # gpu_stats = DeviceStatsMonitor()
     # args.callbacks += [gpu_stats]
 
     # Training
@@ -352,15 +381,15 @@ def cli_main():
 
     # Final evaluation
     # This will run test with latest epoch, but not with best epoch. This is wrong.
-    # trainer.test(test_dataloaders=loader_val, verbose=False)
+    # trainer.test(dataloaders=loader_val, verbose=False)
     
     # Even after loading checkpoint, self.trainer.checkpoint_callback.best_model_score will properly
     # be set. So this is working fine.
-    trainer.test(test_dataloaders=loader_val, ckpt_path="best", verbose=False)
+    trainer.test(dataloaders=loader_val, ckpt_path="best", verbose=False)
 
     # If want to run test without previous fit:
     # (also have to comment 'val = self.trainer.checkpoint_callback.best_model_score' in test_epoch_end() )
-    # trainer.test(model=model, test_dataloaders=loader_val, verbose=False)
+    # trainer.test(model=model, dataloaders=loader_val, verbose=False)
 
 
 if __name__ == '__main__':

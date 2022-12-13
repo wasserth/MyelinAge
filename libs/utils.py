@@ -10,9 +10,6 @@ from joblib import Parallel, delayed
 from scipy.ndimage.morphology import binary_dilation, binary_erosion, binary_closing
 from sklearn.metrics import confusion_matrix
 
-# nnUNet_raw_path = Path(os.environ['nnUNet_raw_data_base']) / "nnUNet_raw_data"
-# nnUNet_preprocessed_path = Path(os.environ['nnUNet_preprocessed'])
-# nnUNet_results_path = Path(os.environ['RESULTS_FOLDER'])
 
 
 def keep_largest_blob(data, debug=False):
@@ -235,11 +232,11 @@ def get_all_metrics(y_true, y_pred, average="micro"):
         TN = TN.sum()
 
     # Sensitivity, hit rate, recall, or true positive rate
-    sensitivity = TP/(TP+FN)
+    sensitivity = TP/(TP+FN+1e-10)
     # Specificity or true negative rate
-    specificity = TN/(TN+FP) 
+    specificity = TN/(TN+FP+1e-10) 
     # Precision or positive predictive value
-    precision = TP/(TP+FP)
+    precision = TP/(TP+FP+1e-10)
     # Negative predictive value
     npv = TN/(TN+FN)
     # Fall out or false positive rate
@@ -373,7 +370,7 @@ def crop_multiple_to_foreground(images, mask, out_dir=None):
     mask_img = nib.load(mask)
     mask = mask_img.get_fdata() > 0
 
-    img = nib.load(images[0]).get_fdata()
+    img = nib.load(str(images[0])).get_fdata()
     img[~mask] = 0
     _, _, bbox, _ = crop_to_foreground(img, None, None, 0, 0)
 

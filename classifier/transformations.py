@@ -96,8 +96,8 @@ def get_transforms(hparams):
         # train_tfs += [RandGaussianNoise(mean=0.0, std=50, prob=p)]  # 150: strong noise; this is for pre-normalization
         train_tfs += [RandGaussianNoise(mean=0.0, std=0.1, prob=p)]  # this for after normalization; 0.1: medium; 0.2: strong
     if hparams.daug_smooth: 
-        # train_tfs += [RandGaussianSmooth(sigma_x=(.1, .8), sigma_y=(.1, .8), sigma_z=(.1, .8), prob=p)]  # used as default for brats_genom so far
-        train_tfs += [RandGaussianSmooth(sigma_x=(.1, .4), sigma_y=(.1, .4), sigma_z=(.1, .4), prob=p)]  # light blurring; [.1, .8]: medium bluring; [.5, 1.5]: strong bluring
+        train_tfs += [RandGaussianSmooth(sigma_x=(.1, .8), sigma_y=(.1, .8), sigma_z=(.1, .8), prob=p)]  # used as default for brats_genom so far
+        # train_tfs += [RandGaussianSmooth(sigma_x=(.1, .4), sigma_y=(.1, .4), sigma_z=(.1, .4), prob=p)]  # light blurring; [.1, .8]: medium bluring; [.5, 1.5]: strong bluring
     if hparams.daug_rotate: 
         train_tfs += [RandRotate90(prob=p)]
     if hparams.daug_flip: 
@@ -231,10 +231,10 @@ if __name__ == "__main__":
     # hparams.daug_spike_noise = 1  # not good
     # hparams.daug_posterize = 1
 
-    # hparams.daug_contrast = 1  # 0.12s
+    hparams.daug_contrast = 1  # 0.12s
     
     # hparams.daug_noise = 1  # 0.18s
-    hparams.daug_smooth = 1  # 0.20s
+    # hparams.daug_smooth = 1  # 0.20s
     # hparams.daug_flip = 1 
 
     # hparams.daug_random_erasing = 1  # 0.10s
@@ -247,7 +247,8 @@ if __name__ == "__main__":
     hparams.daug_prob = 1.0
     # hparams.daug_prob = 0.2
 
-    hparams.crop_size = [140,170,140]
+    # hparams.crop_size = [140,170,140]
+    hparams.crop_size = [86,94,86]
     modality = "mri"
     
     if modality == "ct":

@@ -91,7 +91,7 @@ class CbrTiny(nn.Module):
         x = self.Conv_3_mp(x)
         x = self.relu(self.Conv_4_bn(self.Conv_4(x)))
         # x = self.Conv_4_mp(x)
-        # print(f"Before AP: {x.shape}")
+        # print(f"Shape before avg pooling: {x.shape}")
         x = self.Conv_4_ap(x)
         x = torch.flatten(x, 1)
         if not self.return_features:

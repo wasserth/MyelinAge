@@ -1,0 +1,9 @@
+numpy
+pandas
+nibabel 
+p-tqdm
+pytorch-lightning
+timm
+torchmetrics
+scipy
+sklearn

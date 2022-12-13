@@ -70,5 +70,6 @@ args_short_to_long = {
     "-re": ("daug_random_erasing", 0),
     "-rea": ("daug_re_area", 0.33),
     "-rec": ("daug_re_count", 3),
-    "-rem": ("daug_re_mode", "const")
+    "-rem": ("daug_re_mode", "const"),
+    "-so": ("slice_orientation", "z")
 }
