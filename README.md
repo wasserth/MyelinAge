@@ -2,7 +2,7 @@
 
 Model to predict the myelin age in infant MRI images.
 
-This is the code for the paper: TODO
+This is the code for the paper: https://pubs.rsna.org/doi/10.1148/ryai.220292
 
 The training data can be found here: https://zenodo.org/record/6556135
 
